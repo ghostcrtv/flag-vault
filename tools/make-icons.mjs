@@ -7,7 +7,7 @@ const door = vaultDoor().replace(/<svg[^>]*>/, "").replace("</svg>", "");
 const icon = (scale) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
   <defs>
     <radialGradient id="bg" cx="50%" cy="40%" r="75%"><stop offset="0" stop-color="#16243f"/><stop offset=".6" stop-color="#0a1222"/><stop offset="1" stop-color="#03060c"/></radialGradient>
-    <linearGradient id="fl" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f3dca3"/><stop offset="1" stop-color="#b8923f"/></linearGradient>
+    <linearGradient id="fl" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#b5ffe6"/><stop offset="1" stop-color="#12b886"/></linearGradient>
     <radialGradient id="halo"><stop offset="0" stop-color="#46b3ff" stop-opacity=".35"/><stop offset="1" stop-color="#46b3ff" stop-opacity="0"/></radialGradient>
   </defs>
   <rect width="1024" height="1024" fill="url(#bg)"/>
@@ -17,8 +17,8 @@ const icon = (scale) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10
     <g transform="translate(200 200)">
       <rect x="-30" y="-58" width="7" height="118" rx="3.5" fill="#c6ceda"/>
       <circle cx="-26.5" cy="-60" r="7" fill="url(#fl)"/>
-      <path d="M-23 -52 C 0 -64, 18 -38, 44 -50 L 44 6 C 18 18, 0 -8, -23 4 Z" fill="url(#fl)" stroke="#8f6e30" stroke-width="1.5"/>
-      <path d="M-23 -24 C 0 -36, 18 -10, 44 -22" fill="none" stroke="#1d6fb8" stroke-width="9"/>
+      <path d="M-23 -52 C 0 -64, 18 -38, 44 -50 L 44 6 C 18 18, 0 -8, -23 4 Z" fill="url(#fl)" stroke="#0b7a57" stroke-width="1.5"/>
+      <path d="M-23 -24 C 0 -36, 18 -10, 44 -22" fill="none" stroke="#5aa9ff" stroke-width="9"/>
     </g>
   </g>
 </svg>`;

@@ -1,8 +1,8 @@
 # The Flag Vault
 
-A flag-knowledge heist for iPad. Created by **Leighton R. & Steve R.** © 2026.
+A flag and geography heist for iPad. Created by **Leighton R. & Steve R.** © 2026.
 
-Your crew breaks into a high-security vault. Each of six chambers is a set of locks, and every lock opens only when you type the country a flag belongs to. The flags get harder chamber by chamber, ending with the six-tumbler Final Lock and, if you make it, the vault door swinging open.
+Your crew breaks into a high-security vault. Each of seven chambers is a set of locks, and every lock opens only when you type the country a flag belongs to. The flags get harder chamber by chamber, ending with the six-tumbler Final Lock and, if you make it, the vault door swinging open.
 
 It's a plain web app: no accounts, no paid services, no build step needed to play. Once it has loaded on the iPad it also works offline.
 
@@ -49,51 +49,33 @@ Always upload `sw.js` along with any changed files. It's the offline cache list,
 
 ## How to play
 
-**Modes**
-- **One crew:** you agree on every answer together.
-- **Take turns:** players alternate flags. Shields and loot are shared, and the debrief shows each player's score.
-- **Timed mode** is optional and off by default. It gives 45 seconds per flag.
+Tap **Plan the heist**, read the mission briefing, and go. Every heist has a new crew name, target bank, city, inside contact, story lines, surprise events and a one-of-a-kind treasure.
 
-**Resources**
-- **Shields:** you start with 4. Each wrong answer (or skip) costs one. Lose them all and you're caught. A flawless chamber wins one back, up to 5.
-- **Gadgets:** you start with 3. Each one is used up when spent, and you can get one more from a Supply Drop. The game always shows the cost before you confirm.
+**On screen**
+- **Lives** (the badges): you start with 4. A wrong answer, a skip or running out of time costs one. Lose them all and you're caught. Finish a chamber with no mistakes to win one back.
+- **Gadgets**: you start with 3. Each one buys a clue (Region, Map Pin, First Letter or Capital City). A clue also makes that flag pay a little less. Supply Drops give you more.
+- **Loot**: your score. Deeper chambers pay more, and getting answers right in a row pays extra.
+- **Skip**: shows the answer and moves on, but costs a life.
+- **Clock**: 45 seconds per lock. If it runs out, that counts as wrong. The clock pauses while a pop-up is open.
+- The **?** button opens the quick guide at any time.
 
-| Gadget | Reveals | Loot cost for that flag |
-|---|---|---|
-| Region Scan | The region of the world | −25% |
-| Satellite Locator | A ping on the world map | −35% |
-| Letter Decoder | The first letter and the shape of the name | −50% |
-| Intel File | The capital, plus the status for territories | −50% |
+**The route**: 7 chambers, 8 locks each (56 in total, about 25–30 minutes). Every lock in a chamber uses that chamber's challenge.
 
-- **Loot:** deeper chambers pay more per flag. A streak of correct answers adds up to +50%.
+| # | Chamber | Challenge | Flags |
+|---|---|---|---|
+| 1 | Street Entrance | Flag scan: name the flag | Famous |
+| 2 | Security Lobby | Decryption: the flag appears tile by tile; answer early for up to double loot | Well known |
+| 3 | Control Room | Satellite uplink: a country glows on the map; name it (its flag shows afterwards) | Easier countries |
+| 4 | Laser Corridor | Doppelgänger: lookalike flags flicker, then one locks in | Mid-level |
+| 5 | Rooftop Observatory | Satellite uplink, harder countries | Harder |
+| 6 | Deep Vault Corridor | Laser sweep: a laser reveals the flag left to right; answer early for a bonus | Expert |
+| 7 | The Final Lock | Eight expert flags, one bolt per right answer | Toughest |
 
-**The route**
+**Surprises** (3 random ones per heist, at random spots in chambers 2–6): Laser Grid (no gadgets, double loot), Guard Patrol (answer within 25 seconds for triple loot), Supply Drop (+1 gadget), Surprise Checkpoint (bonus flag that wins a life), Open Deposit Box (free loot), Spare Keycard (+1 life). There's also a chance to **bet** your loot before one flag in chambers 4, 6 and 7.
 
-| # | Chamber | Locks | Flags | What's new |
-|---|---|---|---|---|
-| 1 | Street Entrance | 5 | Famous (Canada, Japan, South Korea…) | The basics |
-| 2 | Security Lobby | 5 | Well known | **Decryption scan:** the flag reveals tile by tile; answer early for up to double loot |
-| 3 | Laser Corridor | 6 | Mid-level and lookalikes | **Doppelgänger:** lookalike flags flicker past, then one locks in. Plus a random security event |
-| 4 | Control Room | 6 | Harder | **Satellite uplink** map question and the first **High-risk breach** wager |
-| 5 | Deep Vault Corridor | 6 | Expert, including territories | Another wager and a random security event |
-| 6 | The Final Lock | 6 | The toughest flags, mostly territories | Each correct answer pulls a bolt from the vault door |
+**Answers**: capitals, accents and small typos are fine. A different country is never accepted. Close spellings get one free retry, and vague answers like "Korea" ask which one.
 
-That's 34 locks, about 20 minutes per run. It's long enough to feel like a real heist and short enough to finish in one sitting. The difficulty comes only from which flags appear: every flag is always shown full size and clear.
-
-**Security events** (one of these is drawn at random at two points in each run):
-- **Laser Grid:** gadgets are offline, but that flag pays double.
-- **Patrol Countdown:** answer within 25 seconds for triple loot. Running out only loses the bonus.
-- **Supply Drop:** +1 gadget.
-- **Extra Checkpoint:** a bonus flag. Getting it right restores a shield; missing it costs nothing.
-
-**Answers.** Capitals, spaces, accents and punctuation never matter, and small typos are forgiven ("Phillipines", "Kazakstan"). The game never accepts a *different* country, though. For example, "Niger" is wrong for Nigeria.
-- If a spelling is close but the game can't be sure, it lets you correct it once, free.
-- Vague answers like "Korea" or "Congo" get a prompt to be more specific.
-- Near-identical twins (Chad/Romania, Indonesia/Monaco) get one free second look.
-
-**Starting fresh.** A run is saved after every answer, so you can close the iPad and resume later from the title screen. To abandon a run, tap the **Settings** gear and choose **Abandon heist**, or choose **Start a new heist** on the title screen. Settings and your best haul are also saved on the iPad.
-
----
+**Saving**: a heist is saved after every answer. To give up on one, tap the settings gear and choose **Abandon heist**.
 
 ## Where everything lives (for changes later)
 
@@ -102,7 +84,9 @@ index.html                 the page
 css/style.css              all colors, fonts and layout (colors are at the top)
 js/data/countries.js       every flag: name, accepted answers, region, capital, difficulty tier
 js/data/lookalikes.js      Doppelgänger groups (flags that are easy to confuse)
-js/data/chambers.js        the chambers, question slots, rules, gadgets, events, vault prizes
+js/data/chambers.js        the chambers (challenge + difficulty per lock), rules, gadgets, events
+js/data/story.js           all story text; a new mix is picked each heist
+js/data/treasures.js       word lists the finale treasure is invented from
 js/data/audio-files.js     optional sound files (see below)
 js/data/flags-data.js      GENERATED: all flag artwork
 js/data/map-data.js        GENERATED: the world map
@@ -115,8 +99,9 @@ tools/                     scripts that rebuild the generated files, icons and o
 Common changes:
 - **Add a flag or fix a name.** Edit `js/data/countries.js`. Each flag is one line. Add alternate names to `aliases`; typos are handled automatically.
 - **Make a flag easier or harder.** Change its `tier` (1–6).
-- **Change the chamber lineup.** Edit `js/data/chambers.js`. Add or remove slots, change tiers, move wagers or events, or add a whole new chamber object.
-- **Change the look.** The color and font variables are at the top of `css/style.css`.
+- **Change the chamber lineup.** Edit `js/data/chambers.js`. Each chamber has one `mechanic` and a `tiers` list (one entry per lock). Add a chamber by copying one, and add a matching list of intro lines in `story.js`.
+- **Add story lines or treasure words.** Edit `js/data/story.js` or `js/data/treasures.js`.
+- **Change the look.** The color and font variables are at the top of `css/style.css`. The font is Outfit (Open Font License), bundled in `fonts/` so it works offline.
 
 Changes to the flag list need the generated files rebuilt. On a computer with Node.js and Python, run:
 
@@ -139,7 +124,7 @@ Or just ask Claude to make the change and send you the updated files.
 
 ## Sound and music
 
-Everything is synthesized live in the browser: the pulsing heist music, which gains layers chamber by chamber; the lock clicks; the alarms; and the vault door opening. No files are needed.
+Everything is synthesized live in the browser: the driving action music (124 bpm, getting faster and adding drums, arpeggios and risers chamber by chamber); the lock clicks; the alarms; and the vault door opening. No files are needed.
 
 To use your own sounds (for example from Envato Elements):
 1. Put the files in a new `audio/` folder. Use `.mp3` or `.m4a`.
@@ -149,7 +134,7 @@ To use your own sounds (for example from Envato Elements):
 Any slot you fill replaces the built-in sound. Any slot left empty keeps it.
 
 The most worthwhile files to get:
-1. Music loops in three intensities: **calm** (chambers 1–3), **tense** (4–5) and **final** (the Final Lock). Search for "heist suspense loop" or "spy thriller underscore loop".
+1. Music loops in three intensities: **calm** (chambers 1–3), **tense** (4–6) and **final** (the Final Lock). Search for "heist suspense loop" or "spy thriller underscore loop".
 2. **Vault door opening**, about 5 seconds, heavy and mechanical.
 3. **Lock click / latch** for correct answers.
 4. **Alarm buzz** for wrong answers, and a **security siren** for events.

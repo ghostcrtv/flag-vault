@@ -3,9 +3,10 @@
 // replaces the synthesized version automatically.
 import { AUDIO_FILES } from "../data/audio-files.js";
 
-const CHORDS = [ // D minor heist progression, as MIDI roots + minor/major
-  [50, "m"], [46, "M"], [43, "m"], [45, "M"],
-];
+// Driving action progression in D minor: Dm Dm Bb C, as MIDI roots.
+const CHORDS = [[50, "m"], [50, "m"], [46, "M"], [48, "M"]];
+// 16-step spy-action bass riff (semitones above the chord root).
+const RIFF = [0, 0, 12, 0, 0, 10, 0, 12, 0, 0, 12, 0, 7, 0, 10, 12];
 const midi = (n) => 440 * Math.pow(2, (n - 69) / 12);
 
 class AudioEngine {
@@ -106,7 +107,7 @@ class AudioEngine {
   }
 
   #musicFileSlot() {
-    const slot = this.intensity >= 5 ? "final" : this.intensity >= 3 ? "tense" : "calm";
+    const slot = this.intensity >= 6 ? "final" : this.intensity >= 3 ? "tense" : "calm";
     return this.buffers[slot] ? slot : null;
   }
 
@@ -133,7 +134,7 @@ class AudioEngine {
 
   #schedule() {
     const ctx = this.ctx;
-    const bpm = 84 + this.intensity * 7;
+    const bpm = 124 + this.intensity * 4; // 124 bpm in chamber 1, 144 at the final lock
     const sixteenth = 60 / bpm / 4;
     while (this.nextTime < ctx.currentTime + 0.15) {
       this.#playStep(this.step, this.nextTime, sixteenth);
@@ -145,27 +146,84 @@ class AudioEngine {
   #playStep(step, t, dur) {
     const L = this.intensity;
     const bar = Math.floor(step / 16);
-    const [root, kind] = CHORDS[Math.floor(bar / 2) % CHORDS.length];
+    const [root, kind] = CHORDS[bar % CHORDS.length];
     const s = step % 16;
-    // Pad: sustained chord, re-voiced every two bars.
-    if (step % 32 === 0) {
-      const third = kind === "m" ? 3 : 4;
-      for (const n of [root + 12, root + 12 + third, root + 19, root + 24]) this.#pad(midi(n), t, dur * 32, 0.05);
+    const third = kind === "m" ? 3 : 4;
+    // Kick: half-time at first, four-on-the-floor from chamber 2.
+    if (s === 0 || s === 8 || (L >= 1 && (s === 4 || s === 12))) this.#drum(t, 0.75);
+    if (L >= 3 && s === 14) this.#drum(t, 0.45);
+    // Snare/clap on the backbeat.
+    if (s === 4 || s === 12) this.#snare(t, 0.22 + L * 0.02);
+    if (L >= 4 && (s === 15 || s === 13) && bar % 4 === 3) this.#snare(t, 0.15);
+    // Hats: eighths, sixteenths from chamber 3, open hat on the offbeat.
+    if (s % 2 === 0 || L >= 2) this.#tick(t, s % 4 === 2 ? 0.11 : 0.06, 8000);
+    if (L >= 1 && s % 4 === 2) this.#tick(t, 0.05, 5000);
+    // Driving sixteenth bass riff.
+    this.#bassSaw(midi(root - 12 + RIFF[s]), t, dur * 0.9, s % 4 === 0 ? 0.24 : 0.17);
+    // Staccato chord stabs on syncopated offbeats.
+    if ([3, 6, 11].includes(s) && L >= 0) {
+      for (const n of [root + 12, root + 12 + third, root + 19]) this.#stab(midi(n), t, dur * 1.4, 0.05 + L * 0.006);
     }
-    // Pulse bass: steady eighths, the heartbeat of the heist.
-    if (s % 2 === 0) this.#bass(midi(root - 12), t, dur * 1.6, s % 8 === 0 ? 0.32 : 0.2);
-    // Ticking clock from chamber 2.
-    if (L >= 1 && s % 4 === 2) this.#tick(t, 0.05 + L * 0.008, 7000);
-    // Low drum from chamber 3.
-    if (L >= 2 && (s === 0 || s === 10)) this.#drum(t, 0.5);
-    // Tension arpeggio from chamber 4.
-    if (L >= 3 && s % 2 === 1) {
-      const third = kind === "m" ? 3 : 4;
+    // Sustained pad underneath for weight.
+    if (s === 0 && bar % 2 === 0) for (const n of [root + 12, root + 19]) this.#pad(midi(n), t, dur * 32, 0.025);
+    // Lead arpeggio from chamber 3, faster and higher as you go deeper.
+    if (L >= 2) {
       const pat = [0, third, 7, 12, 7, third, 12, 15];
-      this.#pluck(midi(root + 24 + pat[(s >> 1) % 8]), t, dur * 1.5, 0.045 + (L - 3) * 0.01);
+      if (s % 2 === 1 || L >= 4) this.#pluck(midi(root + 24 + pat[s % 8]), t, dur * 1.2, 0.04 + (L - 2) * 0.008);
     }
-    // Final lock: a high string ostinato.
-    if (L >= 5 && s % 8 === 0) this.#pad(midi(root + 31), t, dur * 7, 0.03);
+    // Riser into every 4th bar from chamber 4.
+    if (L >= 3 && s === 0 && bar % 4 === 3) this.#riser(t, dur * 16);
+    // Final lock: pounding tom fills.
+    if (L >= 5 && bar % 2 === 1 && s >= 12) this.#tom(t, 140 - (s - 12) * 15);
+  }
+
+  #bassSaw(freq, t, dur, vol) {
+    const ctx = this.ctx;
+    const o = ctx.createOscillator(); o.type = "sawtooth"; o.frequency.value = freq;
+    const f = ctx.createBiquadFilter(); f.type = "lowpass"; f.Q.value = 6;
+    f.frequency.setValueAtTime(900 + this.intensity * 250, t);
+    f.frequency.exponentialRampToValueAtTime(220, t + dur);
+    o.connect(f);
+    this.#out(f, vol, t, dur);
+    o.start(t); o.stop(t + dur + 0.02);
+  }
+
+  #stab(freq, t, dur, vol) {
+    const ctx = this.ctx;
+    const f = ctx.createBiquadFilter(); f.type = "lowpass"; f.frequency.setValueAtTime(3200, t); f.frequency.exponentialRampToValueAtTime(600, t + dur);
+    for (const det of [-9, 9]) {
+      const o = ctx.createOscillator(); o.type = "sawtooth"; o.frequency.value = freq; o.detune.value = det;
+      o.connect(f); o.start(t); o.stop(t + dur + 0.02);
+    }
+    this.#out(f, vol, t, dur);
+  }
+
+  #snare(t, vol) {
+    const src = this.ctx.createBufferSource(); src.buffer = this.noise;
+    const f = this.ctx.createBiquadFilter(); f.type = "bandpass"; f.frequency.value = 1900; f.Q.value = 0.8;
+    src.connect(f);
+    this.#out(f, vol, t, 0.16, this.musicBus, 0.001);
+    src.start(t, Math.random()); src.stop(t + 0.2);
+    const o = this.ctx.createOscillator(); o.type = "triangle"; o.frequency.setValueAtTime(220, t); o.frequency.exponentialRampToValueAtTime(140, t + 0.08);
+    this.#out(o, vol * 0.6, t, 0.1, this.musicBus, 0.001);
+    o.start(t); o.stop(t + 0.12);
+  }
+
+  #tom(t, freq) {
+    const o = this.ctx.createOscillator(); o.type = "sine";
+    o.frequency.setValueAtTime(freq, t); o.frequency.exponentialRampToValueAtTime(freq * 0.5, t + 0.2);
+    this.#out(o, 0.35, t, 0.25, this.musicBus, 0.002);
+    o.start(t); o.stop(t + 0.3);
+  }
+
+  #riser(t, dur) {
+    const src = this.ctx.createBufferSource(); src.buffer = this.noise; src.loop = true;
+    const f = this.ctx.createBiquadFilter(); f.type = "bandpass"; f.Q.value = 3;
+    f.frequency.setValueAtTime(400, t); f.frequency.exponentialRampToValueAtTime(7000, t + dur);
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.12, t + dur * 0.95); g.gain.linearRampToValueAtTime(0, t + dur);
+    src.connect(f).connect(g).connect(this.musicBus);
+    src.start(t); src.stop(t + dur + 0.05);
   }
 
   #out(node, gainVal, t, dur, bus = this.musicBus, attack = 0.005) {

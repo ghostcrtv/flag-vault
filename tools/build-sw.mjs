@@ -7,7 +7,7 @@ import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const include = ["index.html", "manifest.webmanifest", "css", "js", "icons", "audio"];
+const include = ["index.html", "manifest.webmanifest", "css", "fonts", "js", "icons", "audio"];
 const files = [];
 const walk = (rel) => {
   const abs = path.join(root, rel);
@@ -16,7 +16,7 @@ const walk = (rel) => {
   else if (!/(^|\/)\.|\.svg$/.test(rel)) files.push(rel.split(path.sep).join("/"));
 };
 include.forEach(walk);
-const keep = files.filter((f) => !f.startsWith("icons/icon-1024") && !f.endsWith(".md"));
+const keep = files.filter((f) => !f.startsWith("icons/icon-1024") && !f.endsWith(".md") && !f.endsWith(".txt"));
 const hash = crypto.createHash("sha256");
 for (const f of keep) hash.update(f).update(fs.readFileSync(path.join(root, f)));
 const version = hash.digest("hex").slice(0, 12);

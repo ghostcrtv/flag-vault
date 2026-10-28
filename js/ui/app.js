@@ -2,7 +2,8 @@
 import { DATA } from "../data/index.js";
 import { Heist } from "../engine/heist.js";
 import { audio } from "./audio.js";
-import { vaultDoor, icon, routeNode, treasureRoom } from "./art.js";
+import { vaultDoor, icon, routeNode } from "./art.js";
+import { treasureRoom } from "./treasure-art.js";
 import { worldMap } from "./map.js";
 import { FLAG_SVG } from "../data/flags-data.js";
 
@@ -23,7 +24,7 @@ const settings = Object.assign({
   reduceMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
   largeText: false, autoKeyboard: true,
 }, store.get(KEY.settings, {}));
-const lastCrew = store.get("flagvault.crew", { mode: "team", names: ["Leighton", "Steve"], timed: false });
+
 
 function applySettings() {
   root.classList.toggle("reduce-motion", settings.reduceMotion);
@@ -40,6 +41,20 @@ const flagUrls = {};
 const flagSrc = (code) => (flagUrls[code] ??= URL.createObjectURL(new Blob([FLAG_SVG[code]], { type: "image/svg+xml" })));
 const wait = (ms) => new Promise((r) => setTimeout(r, settings.reduceMotion ? Math.min(ms, 250) : ms));
 const country = (code) => DATA.countries.find((c) => c.code === code);
+const ST = DATA.story;
+/** Fill story placeholders with this run's details. */
+function tell(text) {
+  const st = heist?.story || {};
+  return String(text)
+    .replace(/\{vault\}/g, st.vault || "the vault").replace(/\{city\}/g, st.city || "the city")
+    .replace(/\{contact\}/g, st.contact || "Nova").replace(/\{crew\}/g, st.crew || "Crew")
+    .replace(/^the /, "The ").replace(/([.!?] )the /g, "$1The ");
+}
+/** A line from a list that stays the same for this moment of the run. */
+function line(list, salt = 0) {
+  const n = (heist ? heist.state.seed + heist.state.history.length * 7 + salt : salt);
+  return tell(list[Math.abs(n) % list.length]);
+}
 
 function flash(kind) {
   if (settings.reduceMotion) return;
@@ -65,7 +80,7 @@ fitViewport();
 // ---------------------------------------------------------------- state
 let heist = null;
 let view = "title";            // title | setup | briefing | heist | debrief
-let crew = { ...lastCrew };
+
 let q = null;                  // per-question interface state
 let timers = [];               // intervals/timeouts to clear when leaving a question
 
@@ -77,7 +92,7 @@ function save() {
 
 function setIntensity() {
   const ci = heist ? heist.state.ci : 0;
-  const level = heist && heist.chamber.finalLock ? 5 : ci;
+  const level = heist && heist.chamber.finalLock ? 6 : ci;
   document.body.dataset.intensity = level;
   audio.setIntensity(level);
 }
@@ -86,7 +101,6 @@ function setIntensity() {
 function render() {
   clearTimers();
   if (view === "title") return renderTitle();
-  if (view === "setup") return renderSetup();
   if (view === "briefing") return renderBriefing();
   if (view === "debrief") return renderDebrief();
   const p = heist.state.phase;
@@ -118,7 +132,7 @@ function renderTitle() {
       <div class="title-door">${vaultDoor({ spin: true })}</div>
       <div class="title-copy">
         <h1 class="wordmark"><span class="the">The</span><span>Flag</span><span>Vault</span></h1>
-        <p class="title-lede">Six chambers of security stand between your crew and the vault. The only way through is knowing your flags.</p>
+        <p class="title-lede">Seven chambers. One legendary treasure. The only way in is knowing your flags (and your map).</p>
         <div class="title-actions">
           ${saved ? `<button class="btn" data-act="resume">Resume the heist · ${esc(DATA.chambers[saved.state.ci].name)}</button>` : ""}
           <button class="btn ${saved ? "secondary" : ""}" data-act="new">${saved ? "Start a new heist" : "Plan the heist"}</button>
@@ -134,78 +148,53 @@ function renderTitle() {
   on(el, '[data-act="new"]', "click", () => {
     tap();
     if (saved && !confirm("Start over? Your heist in progress will be abandoned.")) return;
-    store.del(KEY.run); view = "setup"; render();
+    store.del(KEY.run); newHeist();
   });
   on(el, '[data-act="resume"]', "click", () => { tap(); heist = saved; view = "heist"; audio.startMusic(); render(); });
   on(el, '[data-act="settings"]', "click", () => { tap(); openSettings(); });
   on(el, '[data-act="sound"]', "click", () => { settings.muted = !settings.muted; applySettings(); tap(); render(); });
 }
 
-// ---------------------------------------------------------------- setup
-function renderSetup() {
-  const el = mount(`
-    <div class="panel">
-      <div class="kicker">Assemble the crew</div>
-      <h1>Who's on this job?</h1>
-      <div class="choice-row" role="group" aria-label="Play mode">
-        <button class="choice" data-mode="team" aria-pressed="${crew.mode === "team"}"><strong>One crew</strong><span>Work every flag together and agree on each answer.</span></button>
-        <button class="choice" data-mode="turns" aria-pressed="${crew.mode === "turns"}"><strong>Take turns</strong><span>Alternate flags. Shields and loot are still shared, and the debrief shows who cracked what.</span></button>
-      </div>
-      ${crew.mode === "turns" ? `<div class="names">
-        <div class="field"><label for="n1">First player</label><input id="n1" class="text-input" maxlength="16" value="${esc(crew.names[0])}" autocomplete="off"></div>
-        <div class="field"><label for="n2">Second player</label><input id="n2" class="text-input" maxlength="16" value="${esc(crew.names[1])}" autocomplete="off"></div>
-      </div>` : ""}
-      <div>
-        <div class="toggle-row"><div><strong>Timed mode</strong><small>${R.timedSeconds} seconds per flag. Running out of time counts as a miss. Off by default.</small></div>
-          <button class="switch" role="switch" aria-checked="${crew.timed}" aria-label="Timed mode" data-act="timed"></button></div>
-      </div>
-      <div class="actions">
-        <button class="btn ghost" data-act="back">Back</button>
-        <button class="btn" data-act="go">Read the briefing</button>
-      </div>
-    </div>`, "panel-screen");
-  const readNames = () => {
-    const a = el.querySelector("#n1"), b = el.querySelector("#n2");
-    if (a) crew.names = [a.value.trim() || "Player 1", b.value.trim() || "Player 2"];
-  };
-  on(el, "[data-mode]", "click", (e) => { tap(); readNames(); crew.mode = e.currentTarget.dataset.mode; render(); });
-  on(el, '[data-act="timed"]', "click", () => { tap(); readNames(); crew.timed = !crew.timed; render(); });
-  on(el, '[data-act="back"]', "click", () => { tap(); view = "title"; render(); });
-  on(el, '[data-act="go"]', "click", () => { tap(); readNames(); store.set("flagvault.crew", crew); view = "briefing"; render(); });
+// ---------------------------------------------------------------- new heist
+function newHeist() {
+  heist = Heist.create(DATA, { mode: "team", players: ["Crew"], timed: true });
+  q = null;
+  view = "briefing";
+  render();
 }
 
 // ---------------------------------------------------------------- briefing
 function routeHtml(current, big = false, doneUpTo = current) {
   return `<div class="route ${big ? "big" : ""}" aria-label="Chamber ${current + 1} of ${DATA.chambers.length}">${DATA.chambers.map((c, i) => {
     const state = i < doneUpTo ? "done" : i === current ? "current" : "locked";
-    return `${i ? `<div class="wire ${i <= doneUpTo ? "done" : ""}"></div>` : ""}<div class="node ${state}">${routeNode(state, !!c.finalLock)}${big ? `<small>${esc(c.name.replace("The ", ""))}</small>` : ""}</div>`;
+    return `${i ? `<div class="wire ${i <= doneUpTo ? "done" : ""}"></div>` : ""}<div class="node ${state}">${routeNode(state, !!c.finalLock)}${big ? `<small>${esc(c.short || c.name)}</small>` : ""}</div>`;
   }).join("")}</div>`;
 }
 
 function renderBriefing() {
-  const total = DATA.chambers.reduce((n, c) => n + c.slots.length, 0);
+  const total = heist.totalQuestions;
+  const st = heist.story;
   const el = mount(`
     <div class="panel">
-      <div class="kicker">The briefing</div>
-      <h1>How the job works</h1>
-      <p>A flag appears. Type the country, territory or nation it belongs to. ${DATA.chambers.length} chambers, ${total} locks, and the flags get harder the deeper you go. Spelling slips are forgiven, but naming a different country is not.</p>
+      <div class="kicker">Mission briefing</div>
+      <h1>${esc(st.crew)}</h1>
+      <p class="story">${esc(tell(ST.briefing[st.briefing]))}</p>
       ${routeHtml(0, true, 0)}
+      <h2>How it works</h2>
       <div class="rules">
-        <div class="rule">${icon.shield(true)}<div><strong>${R.startShields} shields</strong><p>Each wrong answer costs a shield. Lose them all and security catches you. Clear a chamber without a miss to win one back.</p></div></div>
-        <div class="rule">${icon.gadget()}<div><strong>${R.startGadgets} gadgets</strong><p>Hints you can spend on any flag: region, map location, first letter or capital. Each costs part of that flag's loot.</p></div></div>
-        <div class="rule">${icon.loot()}<div><strong>Loot</strong><p>Every correct flag adds loot. Deeper chambers pay more, and a streak of correct answers adds up to +${Math.round(R.streakBonusMax * 100)}%.</p></div></div>
-        <div class="rule">${icon.lock(false)}<div><strong>No rush</strong><p>${crew.timed ? `Timed mode is on: ${R.timedSeconds} seconds per flag.` : "There's no clock on ordinary flags. Take your time."} New twists are explained when they first appear.</p></div></div>
+        <div class="rule">${icon.flagSign()}<div><strong>Name it in ${R.timedSeconds} seconds</strong><p>Type the country. Small spelling mistakes are OK. If the clock runs out, it counts as wrong. ${DATA.chambers.length} chambers, ${total} locks, harder as you go.</p></div></div>
+        <div class="rule">${icon.shield(true)}<div><strong>${R.startShields} lives</strong><p>These badges are your lives. A wrong answer costs one. Run out and you get caught. Finish a chamber with no mistakes to win one back.</p></div></div>
+        <div class="rule">${icon.gadget()}<div><strong>${R.startGadgets} gadgets</strong><p>Stuck? Spend a gadget on a clue: Region, Map Pin, First Letter or Capital City. Clues also make that flag pay a bit less. Find more gadgets along the way.</p></div></div>
+        <div class="rule">${icon.loot()}<div><strong>Loot</strong><p>Every right answer adds money to your haul. Deeper chambers pay more, and a streak of right answers pays extra.</p></div></div>
       </div>
       <div class="actions">
         <button class="btn ghost" data-act="back">Back</button>
-        <button class="btn" data-act="go">Approach the entrance</button>
+        <button class="btn" data-act="go">Start the heist</button>
       </div>
     </div>`, "panel-screen");
-  on(el, '[data-act="back"]', "click", () => { tap(); view = "setup"; render(); });
+  on(el, '[data-act="back"]', "click", () => { tap(); heist = null; view = "title"; render(); });
   on(el, '[data-act="go"]', "click", () => {
     tap();
-    const players = crew.mode === "turns" ? crew.names : ["Crew"];
-    heist = Heist.create(DATA, { mode: crew.mode, players, timed: crew.timed });
     const rec = store.get(KEY.records, { bestLoot: 0, vaults: 0, runs: 0 });
     rec.runs++; store.set(KEY.records, rec);
     view = "heist";
@@ -215,38 +204,25 @@ function renderBriefing() {
 }
 
 // ---------------------------------------------------------------- chamber intro
-const MECHANICS = {
-  decrypt: { art: icon.decrypt, title: "Decryption scan", text: "These flags start hidden and decrypt one tile at a time. Answer as soon as you recognize it: the earlier you answer, the bigger the bonus, up to double loot. Waiting costs nothing but the bonus." },
-  doppel: { art: icon.doppel, title: "Doppelgänger", text: "Flags that are easy to mix up flicker past, then the scanner locks onto one. Name the one it locks onto." },
-  map: { art: icon.satellite, title: "Satellite uplink", text: "No flag this time. A country lights up on the satellite map. Name it." },
-  wager: { art: icon.wager, title: "High-risk breach", text: "Before some hard flags you can stake part of your loot. Get it right and the stake is paid back double. Get it wrong and you lose the stake as well as a shield. Playing it safe is always an option." },
-  finalLock: { art: icon.finalLock, title: "The final lock", text: "Six tumblers, six expert flags. Each correct answer retracts one bolt. Misses still cost shields, so you can survive a mistake or two." },
-};
+const MECHANIC_ART = { flag: () => icon.flagSign(), decrypt: () => icon.decrypt(), doppel: () => icon.doppel(), map: () => icon.satellite(), sweep: () => icon.sweep() };
 
 function renderChamberIntro() {
   const s = heist.state, ch = heist.chamber, plan = s.plan.chambers[s.ci].questions;
-  const keys = [];
-  for (const qq of plan) {
-    if (["decrypt", "doppel", "map"].includes(qq.type) && !keys.includes(qq.type)) keys.push(qq.type);
-    if (qq.wager && !keys.includes("wager")) keys.push("wager");
-  }
-  if (ch.finalLock) keys.push("finalLock");
-  const fresh = keys.filter((k) => !heist.introSeen(k));
+  const hasWager = plan.some((qq) => qq.wager);
   const el = mount(`
     <div class="panel">
-      <div class="numeral" aria-hidden="true">${["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"][s.ci]}</div>
-      <div class="chamber-number">Chamber ${s.ci + 1} of ${DATA.chambers.length}${s.ci ? ` · ${money(s.loot)} so far` : ""}</div>
+      <div class="numeral" aria-hidden="true">${s.ci + 1}</div>
+      <div class="chamber-number">Chamber ${s.ci + 1} of ${DATA.chambers.length}${s.ci ? ` · ${money(s.loot)} in the bag` : ""}</div>
       <h1>${esc(ch.name)}</h1>
-      <div class="door-line" aria-hidden="true"></div>
-      <p>${esc(ch.tagline)} ${plan.length} locks stand between you and the next door.</p>
+      <p class="story">${esc(tell(ST.chamberIntro[s.ci][heist.story.chamberIntro[s.ci]]))}</p>
       ${routeHtml(s.ci, true)}
-      ${fresh.map((k) => `<div class="mechanic">${MECHANICS[k].art()}<div><h3>New: ${MECHANICS[k].title}</h3><p>${MECHANICS[k].text}</p></div></div>`).join("")}
+      <div class="mechanic">${MECHANIC_ART[ch.mechanic]()}<div><h3>${ch.finalLock ? "The Final Lock" : `This chamber: ${ST.mechanicName[ch.mechanic]}`}</h3><p>${ch.finalLock ? `${plan.length} expert flags. Every right answer slides one bolt off the vault door. Mistakes cost a life, but you can survive a few.` : ST.mechanicHow[ch.mechanic]} <b>All ${plan.length} locks in this chamber work this way.</b></p></div></div>
+      ${hasWager ? `<div class="mechanic alt">${icon.wager()}<div><h3>Watch out: a big bet</h3><p>Before one flag in this chamber, you'll get the choice to bet some of your loot. Right answer: you win the bet. Wrong answer: you lose it. You can always say no.</p></div></div>` : ""}
       <div class="actions"><button class="btn" data-act="go">${ch.finalLock ? "Face the final lock" : `Enter the ${esc(ch.name.replace(/^The /, ""))}`}</button></div>
     </div>`, "panel-screen");
   if (s.ci) audio.play("chamber");
   on(el, '[data-act="go"]', "click", () => {
     tap();
-    fresh.forEach((k) => heist.markIntro(k));
     heist.beginChamber();
     render();
     focusAnswer();
@@ -271,9 +247,10 @@ function hudHtml() {
       <div class="pips" aria-hidden="true">${pips}</div>
     </div>
     <div class="hud-right">
-      <div class="stat" data-stat="shields" aria-label="${s.shields} shields left"><span class="shields">${shields}</span></div>
-      <div class="stat" data-stat="gadgets" aria-label="${s.gadgets} gadgets left">${icon.gadget()}<span class="num">${s.gadgets}</span></div>
-      <div class="stat loot" data-stat="loot" aria-label="Loot ${money(s.loot)}">${icon.loot()}<span class="num">${money(s.loot)}</span></div>
+      <div class="stat" data-stat="shields" aria-label="${s.shields} lives left"><span class="stat-label">Lives</span><span class="shields">${shields}</span></div>
+      <div class="stat" data-stat="gadgets" aria-label="${s.gadgets} gadgets left"><span class="stat-label">Gadgets</span>${icon.gadget()}<span class="num">${s.gadgets}</span></div>
+      <div class="stat loot" data-stat="loot" aria-label="Loot ${money(s.loot)}"><span class="stat-label">Loot</span>${icon.loot()}<span class="num">${money(s.loot)}</span></div>
+      <button class="icon-btn" data-act="help" aria-label="How this screen works">${icon.help()}</button>
       <button class="icon-btn" data-act="settings" aria-label="Settings and sound">${icon.settings()}</button>
     </div>
   </header>`;
@@ -289,14 +266,13 @@ function renderHeist() {
   const showQuestion = phase === "question" || phase === "result";
   const player = heist.player;
   const finalDone = s.history.filter((h) => h.ci === s.ci && h.correct && !h.bonus).length;
-  let label = "", tag = "";
-  if (a.bonus) tag = `<span class="tag">Extra checkpoint · bonus flag</span>`;
-  else if (a.type === "decrypt") { label = "Decrypting camera feed"; tag = `<span class="tag" data-decrypt-tag></span>`; }
-  else if (a.type === "doppel") { label = `Doppelgänger · ${esc(a.groupName)}`; tag = `<span class="tag" data-doppel-tag>Scanning lookalikes</span>`; }
-  else if (a.type === "map") { label = "Satellite uplink"; tag = `<span class="tag">Name the highlighted country</span>`; }
-  else if (a.finalLock) label = `Final lock · ${finalDone} of ${s.plan.chambers[s.ci].questions.length} bolts released`;
-  else label = `Security clearance ${heist.questionNumber} of ${heist.totalQuestions}`;
-  if (a.laser) tag += ` <span class="tag red">Laser grid: gadgets offline · loot ×2</span>`;
+  let label = a.finalLock ? `Final lock · ${finalDone} of ${s.plan.chambers[s.ci].questions.length} bolts off` : `${ST.mechanicName[a.type]} · lock ${heist.questionNumber} of ${heist.totalQuestions}`;
+  let tag = "";
+  if (a.reveal) tag = `<span class="tag" data-reveal-tag></span>`;
+  else if (a.type === "doppel") tag = `<span class="tag" data-doppel-tag>Scanning lookalikes…</span>`;
+  else if (a.type === "map") tag = `<span class="tag">Name the glowing country</span>`;
+  if (a.bonus) tag = `<span class="tag">Bonus flag · win a life</span> ` + tag;
+  if (a.laser) tag += ` <span class="tag red">Laser grid: no clues · loot ×2</span>`;
   if (a.countdown) tag += ` <span class="tag red" data-count-tag>Beat the patrol for ×3</span>`;
   if (a.stake) tag += ` <span class="tag">${money(a.stake)} at stake</span>`;
 
@@ -307,7 +283,7 @@ function renderHeist() {
       <section class="stage">
         <div class="stage-label"><span>${label}</span>${tag}</div>
         <div class="case ${q.checking ? "checking" : ""} ${a.finalLock ? "final" : ""}" data-case>${showQuestion ? caseHtml(a, finalDone) : `<div class="flag-holder">${icon.lock(false, "#3a465c")}</div>`}</div>
-        ${(a.countdown || a.timed) && phase === "question" ? `<div class="timer" aria-hidden="true"><i data-timer></i></div>` : ""}
+        ${(a.countdown || a.timed) && phase === "question" ? `<div class="timer-row"><div class="timer" aria-hidden="true"><i data-timer></i></div><span class="timer-num" data-timer-num></span></div>` : ""}
       </section>
       <section class="side">
         <div class="side-route">${routeHtml(s.ci)}${consoleHtml(a)}</div>
@@ -317,10 +293,12 @@ function renderHeist() {
     </div>`, "heist");
 
   on(el, '[data-act="settings"]', "click", () => { tap(); openSettings(); });
+  on(el, '[data-act="help"]', "click", () => { tap(); showGuide(); });
   if (phase === "question") wireQuestion(el, a);
   if (phase === "result") wireResult(el);
   if (phase === "event") showEvent();
   if (phase === "wager") showWager();
+  if (phase === "question" && !heist.introSeen("guide")) showGuide();
   return el;
 }
 
@@ -330,16 +308,18 @@ function consoleHtml(a) {
   let pays = a.baseLoot * (1 + streakBonus) * (a.laser ? 2 : 1);
   const left = s.plan.chambers[s.ci].questions.length - s.qi;
   return `<div class="console">
-    <div class="gold"><b>${money(pays)}</b><span>This flag pays${a.type === "decrypt" ? " (more if early)" : ""}</span></div>
-    <div><b>${s.streak}${streakBonus ? ` <small style="color:var(--gold)">+${Math.round(streakBonus * 100)}%</small>` : ""}</b><span>Streak</span></div>
+    <div class="accent"><b>${money(pays)}</b><span>This one pays${a.reveal ? " (more if early)" : ""}</span></div>
+    <div><b>${s.streak}${streakBonus ? ` <small style="color:var(--accent)">+${Math.round(streakBonus * 100)}%</small>` : ""}</b><span>Right in a row</span></div>
     <div><b>${left}</b><span>${heist.chamber.finalLock ? "Tumblers to go" : "Locks to the next door"}</span></div>
   </div>`;
 }
 
 function caseHtml(a, finalDone) {
   if (a.type === "map") {
-    const lit = heist.state.phase === "result" && heist.state.cur.outcome.correct;
-    return worldMap({ target: lit ? null : a.code, lit: lit ? a.code : null, focus: a.code, zoom: "fit", aspect: 1.6, label: "Satellite map with one country highlighted" });
+    const result = heist.state.phase === "result";
+    const lit = result && heist.state.cur.outcome.correct;
+    const flagCard = result ? `<div class="map-flag"><img src="${flagSrc(a.code)}" alt="Flag of ${esc(country(a.code).name)}"></div>` : "";
+    return worldMap({ target: lit ? null : a.code, lit: lit ? a.code : null, focus: a.code, zoom: "fit", aspect: 1.6, label: "Satellite map with one country glowing" }) + flagCard;
   }
   const c = country(a.code);
   const result = heist.state.phase === "result";
@@ -354,7 +334,7 @@ function caseHtml(a, finalDone) {
   }
   return `${door}<div class="flag-holder"><div class="flag-frame">
       <img class="flag-img" data-flag src="${flagSrc(shown)}" alt="${result ? `Flag of ${esc(c.name)}` : "The flag to identify"}" draggable="false">
-      ${tiles}<div class="lock-ring ${q.locked && a.type === "doppel" ? "on" : ""}"></div><div class="scanline"></div>
+      ${tiles}${a.type === "sweep" && !result ? `<div class="sweep-cover" data-sweep aria-hidden="true"><i></i></div>` : ""}<div class="lock-ring ${q.locked && a.type === "doppel" ? "on" : ""}"></div><div class="scanline"></div>
     </div>${stamp}</div>`;
 }
 
@@ -369,19 +349,23 @@ function hintChips(a) {
 
 function controlsHtml(a) {
   const disabled = !q.locked || q.checking;
-  const gadgets = Object.entries(DATA.gadgets).map(([k, g]) => {
+  const n = heist.state.gadgets;
+  const clues = Object.entries(DATA.gadgets).map(([k, g]) => {
     const can = heist.canUseGadget(k);
     const used = a.hints.includes(k);
-    return `<button class="gadget ${used ? "used" : ""}" data-gadget="${k}" ${can.ok && !disabled ? "" : "disabled"} aria-label="${g.name}: ${g.desc} Costs ${Math.round(g.cost * 100)}% of this flag's loot.">
+    return `<button class="gadget ${used ? "used" : ""}" data-gadget="${k}" ${can.ok && !disabled ? "" : "disabled"} aria-label="${g.name} clue: ${g.desc} Uses 1 gadget and ${Math.round(g.cost * 100)}% of this flag's loot.">
       ${icon[k]()}<span><b>${g.name}</b><small>${used ? "Used" : `−${Math.round(g.cost * 100)}% loot`}</small></span></button>`;
   }).join("");
   return `<div class="controls">
-    <div class="gadgets">${gadgets}<button class="gadget pass" data-act="pass" ${disabled ? "disabled" : ""}>${icon.pass()}<span><b>Skip</b><small>Costs a shield</small></span></button></div>
+    <div class="clue-bar">
+      <div class="clue-label">Clues <small>${a.laser ? "off in the laser grid" : n ? `each one uses 1 gadget · you have ${n}` : "no gadgets left"}</small></div>
+      <div class="gadgets">${clues}<button class="gadget pass" data-act="pass" ${disabled ? "disabled" : ""} aria-label="Skip this flag. You lose one life.">${icon.pass()}<span><b>Skip</b><small>lose 1 life</small></span></button></div>
+    </div>
     <form class="answer-row" data-form autocomplete="off">
-      <label class="sr-only" for="answer">${a.type === "map" ? "Name the highlighted country" : "Which country's flag is this?"}</label>
+      <label class="sr-only" for="answer">${a.type === "map" ? "Name the glowing country" : "Which country's flag is this?"}</label>
       <input id="answer" class="answer" type="text" inputmode="text" enterkeyhint="go" autocapitalize="words" autocorrect="off" spellcheck="false" autocomplete="off"
-        placeholder="${a.type === "map" ? "Name the country" : "Type the country"}" ${disabled ? "readonly" : ""} value="${esc(q.typed || "")}">
-      <button class="btn submit" type="submit" ${disabled ? "disabled" : ""}>Verify</button>
+        placeholder="${a.type === "map" ? "Which country is glowing?" : "Type the country"}" ${disabled ? "readonly" : ""} value="${esc(q.typed || "")}">
+      <button class="btn submit" type="submit" ${disabled ? "disabled" : ""}>Go</button>
     </form>
     <div class="feedback ${q.feedbackWarn ? "warn" : ""}" data-feedback role="status" aria-live="polite">${esc(q.feedback)}</div>
   </div>`;
@@ -396,6 +380,7 @@ function focusAnswer() {
 function wireQuestion(el, a) {
   wireControls(el, a);
   if (a.type === "decrypt") wireDecrypt(el, a);
+  if (a.type === "sweep") wireSweep(el, a);
   if (a.type === "doppel" && !q.locked) wireDoppel(el, a);
   else wireTimer(el, a);
 }
@@ -408,7 +393,7 @@ function wireControls(el, a) {
   on(el, "[data-gadget]", "click", (e) => { tap(); confirmGadget(e.currentTarget.dataset.gadget); });
   on(el, '[data-act="pass"]', "click", () => {
     tap();
-    confirmDialog({ title: "Skip this flag?", text: "Skipping counts as a miss: you'll lose a shield and see the answer.", yes: "Skip it", danger: true }, () => {
+    confirmDialog({ title: "Skip this one?", text: "Skipping costs 1 life. You'll see the answer, then move on.", yes: "Skip (lose 1 life)", danger: true }, () => {
       heist.pass(); afterResolve();
     });
   });
@@ -417,11 +402,11 @@ function wireControls(el, a) {
 // Decryption: open one tile at a time.
 function wireDecrypt(el, a) {
   const tiles = [...el.querySelectorAll("[data-tile]")];
-  const tag = el.querySelector("[data-decrypt-tag]");
+  const tag = el.querySelector("[data-reveal-tag]");
   const show = () => {
     for (let i = 0; i < q.opened; i++) tiles[a.tileOrder[i]]?.classList.add("open");
     const hidden = 1 - q.opened / 24;
-    if (tag) tag.textContent = hidden > 0 ? `Early bonus +${Math.round(hidden * R.decryptMaxBonus * 100)}%` : "Fully decrypted";
+    if (tag) tag.textContent = hidden > 0 ? `Answer now: +${Math.round(hidden * R.revealMaxBonus * 100)}% bonus` : "Fully decrypted";
   };
   if (q.opened === 0) q.opened = 2;
   show();
@@ -430,6 +415,28 @@ function wireDecrypt(el, a) {
     q.opened++; show();
     if (q.opened % 3 === 0) audio.play("reveal");
   }, 1300));
+}
+
+// Laser sweep: a laser slides across the flag from left to right.
+function wireSweep(el, a) {
+  const cover = el.querySelector("[data-sweep]");
+  const tag = el.querySelector("[data-reveal-tag]");
+  const total = settings.reduceMotion ? 14000 : 11000;
+  if (!q.revealed) q.revealed = 0.06;
+  const startAt = performance.now() - q.revealed * total;
+  const draw = () => {
+    cover.style.left = `${q.revealed * 100}%`;
+    const hidden = 1 - q.revealed;
+    if (tag) tag.textContent = hidden > 0.01 ? `Answer now: +${Math.round(hidden * R.revealMaxBonus * 100)}% bonus` : "Fully scanned";
+  };
+  draw();
+  let last = 0;
+  timers.push(setInterval(() => {
+    if (q.checking || q.revealed >= 1) return;
+    q.revealed = Math.min(1, (performance.now() - startAt) / total);
+    draw();
+    if (performance.now() - last > 900) { last = performance.now(); audio.play("reveal"); }
+  }, 60));
 }
 
 // Doppelgänger: flicker through the lookalikes, then lock on.
@@ -462,24 +469,33 @@ function wireDoppel(el, a) {
   timers.push(tick);
 }
 
-// Patrol countdown (bonus only) and timed mode (a miss when it runs out).
+// The lock clock (a miss when it runs out) and the patrol bonus countdown.
+// The clock pauses whenever a pop-up is open.
 function wireTimer(el, a) {
   const bar = el.querySelector("[data-timer]");
+  const num = el.querySelector("[data-timer-num]");
   if (!bar) return;
-  const startedAt = q.start;
+  let last = performance.now();
+  if (q.elapsed == null) q.elapsed = 0;
   const tick = () => {
-    if (q.checking) return;
-    const elapsed = (performance.now() - startedAt) / 1000;
+    const now = performance.now();
+    const paused = q.checking || document.querySelector(".overlay");
+    if (!paused) q.elapsed += (now - last) / 1000;
+    last = now;
+    const elapsed = q.elapsed;
     const cdLeft = a.countdown ? a.countdown - elapsed : Infinity;
     const tmLeft = a.timed ? a.timed - elapsed : Infinity;
     const useCd = a.countdown && !q.bonusLost && cdLeft > 0;
     const left = useCd ? cdLeft : tmLeft, total = useCd ? a.countdown : a.timed;
-    if (total) bar.style.transform = `scaleX(${Math.max(0, left / total)})`;
+    if (total) {
+      bar.style.transform = `scaleX(${Math.max(0, left / total)})`;
+      bar.classList.toggle("low", left < 10);
+      if (num) num.textContent = `${Math.max(0, Math.ceil(left))}s`;
+    }
     if (a.countdown && cdLeft <= 0 && !q.bonusLost) {
       q.bonusLost = true;
       const t = el.querySelector("[data-count-tag]");
-      if (t) t.textContent = "Patrol passed: bonus gone, no penalty";
-      if (!a.timed) bar.parentElement.style.visibility = "hidden";
+      if (t) t.textContent = "Patrol passed: bonus gone";
     }
     if (a.timed && tmLeft <= 0) { clearTimers(); heist.timeout(); afterResolve(); }
   };
@@ -490,11 +506,10 @@ function wireTimer(el, a) {
 function confirmGadget(type) {
   const g = DATA.gadgets[type];
   const s = heist.state;
-  const base = heist.active.baseLoot;
   confirmDialog({
-    title: g.name,
-    text: `${g.desc} It uses 1 of your ${s.gadgets} gadget${s.gadgets === 1 ? "" : "s"} and reduces this flag's loot by ${Math.round(g.cost * 100)}% (about ${money(base * g.cost)}).`,
-    yes: `Use ${g.name}`,
+    title: `Use the ${g.name} clue?`,
+    text: `${g.desc} It uses 1 of your ${s.gadgets} gadget${s.gadgets === 1 ? "" : "s"}, and this flag will pay ${Math.round(g.cost * 100)}% less.`,
+    yes: "Use it",
   }, () => {
     const r = heist.useGadget(type);
     if (!r.ok) return;
@@ -504,11 +519,8 @@ function confirmGadget(type) {
     el.querySelector("[data-intel]").innerHTML = hintChips(heist.active);
     el.querySelector('[data-stat="gadgets"] .num').textContent = s.gadgets;
     bump("gadgets");
-    // Refresh gadget buttons, keeping what was typed.
-    const typed = el.querySelector("#answer").value;
-    q.typed = typed;
-    const side = el.querySelector(".side");
-    side.querySelector(".controls").outerHTML = controlsHtml(heist.active);
+    q.typed = el.querySelector("#answer").value;
+    el.querySelector(".controls").outerHTML = controlsHtml(heist.active);
     wireControls(el, heist.active);
     focusAnswer();
   });
@@ -523,8 +535,8 @@ function bump(stat) {
 async function submitAnswer(text) {
   if (!text.trim() || q.checking || !q.locked) return;
   const a = heist.active;
-  const elapsedMs = performance.now() - q.start;
-  const hiddenFraction = a.type === "decrypt" ? 1 - q.opened / 24 : 0;
+  const elapsedMs = (q.elapsed || 0) * 1000;
+  const hiddenFraction = a.type === "decrypt" ? 1 - q.opened / 24 : a.type === "sweep" ? 1 - (q.revealed || 0) : 0;
   q.checking = true;
   q.typed = text;
   const el = $app.querySelector(".heist");
@@ -533,7 +545,7 @@ async function submitAnswer(text) {
   const input = el.querySelector("#answer");
   input.readOnly = true;
   const fb = el.querySelector("[data-feedback]");
-  fb.className = "feedback"; fb.textContent = "Verifying security clearance…";
+  fb.className = "feedback"; fb.textContent = "Checking security clearance…";
   audio.suspense(true);
   audio.play("checking");
   await wait(R.checkingMs);
@@ -575,7 +587,7 @@ function resultHtml(o) {
     const parts = [];
     if (o.gained) parts.push(`<span class="gain">+${money(o.gained)}</span>`);
     if (o.stake) parts.push(`<span class="gain">+${money(o.stake)} stake won</span>`);
-    if (o.shieldRestored) parts.push(`<span class="gain">Shield restored</span>`);
+    if (o.shieldRestored) parts.push(`<span class="gain">+1 life</span>`);
     if (o.multipliers.length) parts.push(o.multipliers.join(", "));
     if (o.exact === false) parts.push(`Accepted "${esc(o.typed)}"`);
     detail = parts.join(" · ");
@@ -584,24 +596,24 @@ function resultHtml(o) {
     if (o.passed) parts.push("Skipped");
     else if (o.timedOut) parts.push("Time ran out");
     else parts.push(`You said "${esc(o.typed)}"${typedName && typedName.toLowerCase() !== o.typed.trim().toLowerCase() ? ` (${esc(typedName)})` : ""}`);
-    if (o.shieldLost) parts.push(`<span class="loss">−1 shield</span>`);
+    if (o.shieldLost) parts.push(`<span class="loss">−1 life</span>`);
     if (o.stake) parts.push(`<span class="loss">−${money(o.stake)} stake lost</span>`);
     if (o.bonus) parts.push("Bonus flag: no penalty");
     detail = parts.join(" · ");
   }
   const s = heist.state;
   const lastInChamber = s.qi === s.plan.chambers[s.ci].questions.length - 1 && s.cur.stage !== "bonus";
-  const nextLabel = s.shields <= 0 ? "Continue" : lastInChamber ? (heist.chamber.finalLock ? "Open the vault" : "Unlock the door") : heist.chamber.finalLock ? "Next tumbler" : "Next flag";
+  const nextLabel = s.shields <= 0 ? "Continue" : lastInChamber ? (heist.chamber.finalLock ? "Open the vault!" : "Unlock the door") : "Next";
   const statusText = c.status ? ` <span style="color:var(--muted);font-size:.9rem">(${esc(c.status)})</span>` : "";
   return `<div class="result ${o.correct ? "good" : "bad"}" role="status" aria-live="assertive">
     <div class="verdict-icon">${o.correct ? icon.granted() : icon.denied()}</div>
     <div>
-      <h2>${o.correct ? "Access granted" : "Access denied · the answer was"}</h2>
+      <h2>${o.correct ? esc(line(ST.correct)) : `${esc(line(ST.wrong))} The answer was:`}</h2>
       <div class="country">${esc(c.name)}${statusText}</div>
       <div class="detail">${detail}</div>
     </div>
     <button class="btn" data-act="next">${nextLabel}</button>
-    ${heist.active.type !== "map" ? `<div class="mini-map">${worldMap({ lit: o.code, focus: o.code, zoom: 2.2, aspect: 4, label: `${c.name} on the world map` })}</div>` : ""}
+    ${heist.active.type !== "map" && !(window.innerWidth >= 1000 && window.innerHeight < 600) ? `<div class="mini-map">${worldMap({ lit: o.code, focus: o.code, zoom: 2.2, aspect: 4, label: `${c.name} on the world map` })}</div>` : ""}
   </div>`;
 }
 
@@ -616,25 +628,51 @@ function wireResult(el) {
   setTimeout(() => btn.focus({ preventScroll: true }), 50);
 }
 
+// ---------------------------------------------------------------- quick guide
+function showGuide() {
+  if (document.querySelector(".overlay")) return;
+  overlay(`<div class="dialog guide" role="dialog" aria-labelledby="gd">
+      <h2 id="gd">Quick guide</h2>
+      <div class="guide-row"><span class="shields">${icon.shield(true)}${icon.shield(true)}</span><div><strong>Badges = your lives</strong><p>You start with ${R.startShields}. A wrong answer (or a skip) loses one. Lose them all and you're caught.</p></div></div>
+      <div class="guide-row">${icon.loot()}<div><strong>Loot = your score</strong><p>Money you've grabbed so far. Every right answer adds more.</p></div></div>
+      <div class="guide-row">${icon.gadget()}<div><strong>Gadgets = clues</strong><p>Each gadget buys one clue (Region, Map Pin, First Letter or Capital City). Using a clue makes that flag pay a bit less.</p></div></div>
+      <div class="guide-row">${icon.countdown()}<div><strong>${R.timedSeconds} seconds per lock</strong><p>Watch the bar under the flag. If time runs out, it counts as wrong. The clock pauses while a pop-up is open.</p></div></div>
+      <div class="guide-row">${icon.pass()}<div><strong>Skip</strong><p>No idea at all? Skip shows you the answer and moves on, but it costs 1 life.</p></div></div>
+      <div class="guide-row"><span class="go-chip">Go</span><div><strong>Type, then Go</strong><p>Type the country and tap Go (or press Return). Small spelling mistakes are fine.</p></div></div>
+      <div class="actions"><button class="btn" data-act="ok">Let's go</button></div>
+    </div>`, (ov) => {
+    ov.querySelector('[data-act="ok"]').addEventListener("click", () => {
+      tap(); heist.markIntro("guide"); save(); ov.remove(); focusAnswer();
+    });
+  });
+}
+
 // ---------------------------------------------------------------- events & wagers
 function showEvent() {
   const ev = heist.pendingEvent;
+  const texts = ST.events[ev.id] || [""];
+  const storyText = tell(texts[heist.story.eventText?.[ev.id] ?? 0]);
   audio.play("alarm");
   flash("denied");
   overlay(`<div class="dialog alert" role="alertdialog" aria-labelledby="evt">
       <div class="siren"></div>
       <div class="event-art">${icon[ev.id]()}</div>
+      <div class="kicker">Security surprise!</div>
       <h2 id="evt">${esc(ev.title)}</h2>
-      <p>${esc(ev.text)}</p>
-      <div class="actions"><button class="btn" data-act="ok">Proceed</button></div>
+      <p class="story">${esc(storyText)}</p>
+      <p class="rule-box"><b>What this means:</b> ${esc(ev.rule)}</p>
+      <div class="actions"><button class="btn" data-act="ok">Got it</button></div>
     </div>`, (ov) => {
     ov.querySelector('[data-act="ok"]').addEventListener("click", () => {
       tap();
-      const eff = heist.ackEvent();
-      if (eff?.gadgets) audio.play("gadget");
+      const eff = heist.ackEvent() || {};
+      if (eff.loot) audio.play("coins");
+      if (eff.shields || eff.gadgets) audio.play("gadget");
       ov.remove();
       render();
-      if (eff?.gadgets) bump("gadgets");
+      if (eff.loot) bump("loot");
+      if (eff.shields) bump("shields");
+      if (eff.gadgets) bump("gadgets");
       focusAnswer();
     });
   });
@@ -645,13 +683,13 @@ function showWager() {
   audio.play("wager");
   const opts = R.wagerOptions.map((f) => {
     const stake = Math.round((loot * f) / 100) * 100;
-    if (f === 0) return `<button class="choice" data-f="0"><strong>Play it safe</strong><span>Answer normally. Nothing extra at risk.</span></button>`;
-    return `<button class="choice" data-f="${f}"><strong>${f === 1 ? "All in" : `Risk ${Math.round(f * 100)}%`}: <em>${money(stake)}</em></strong><span>Right: win ${money(stake)} extra. Wrong: lose ${money(stake)} and a shield.</span></button>`;
+    if (f === 0) return `<button class="choice" data-f="0"><strong>No bet</strong><span>Play the next flag normally. Your loot is safe.</span></button>`;
+    return `<button class="choice" data-f="${f}"><strong>${f === 1 ? "Bet it ALL" : "Bet half"}: <em>${money(stake)}</em></strong><span>Get it right: win ${money(stake)} more. Get it wrong: lose ${money(stake)}.</span></button>`;
   }).join("");
   overlay(`<div class="dialog" role="dialog" aria-labelledby="wg">
       <div class="event-art">${icon.wager()}</div>
-      <h2 id="wg">High-risk breach</h2>
-      <p>The next flag guards a side vault. Stake some of your ${money(loot)} to double it, or keep your loot safe.</p>
+      <h2 id="wg">Want to make a bet?</h2>
+      <p>You have ${money(loot)}. Bet some of it on the next flag. Feeling lucky?</p>
       <div class="wager-options">${opts}</div>
     </div>`, (ov) => {
     on(ov, "[data-f]", "click", (e) => {
@@ -676,11 +714,11 @@ function renderChamberClear() {
       <div class="clear-art">${icon.lock(true)}</div>
       <div class="chamber-number">Chamber ${s.lastClear.ci + 1} of ${DATA.chambers.length} cleared</div>
       <h1>${esc(ch.name)} breached</h1>
-      ${s.lastClear.perfect ? `<p>A flawless chamber. ${s.lastClear.restored ? "Your crew recovers a shield." : "Your shields are already at full strength."}</p>` : `<p>You're through. ${s.shields === 1 ? "One shield left: tread carefully." : ""}</p>`}
+      <p class="story">${esc(line(ST.chamberClear, s.ci))} ${s.lastClear.perfect ? (s.lastClear.restored ? "No mistakes, so you win back a life!" : "No mistakes! Your lives are already full.") : s.shields === 1 ? "Careful: only one life left." : ""}</p>
       <div class="stats">
         <div><b>${main.filter((h) => h.correct).length} / ${main.length}</b><span>Flags correct</span></div>
-        <div class="gold"><b>${money(lootHere)}</b><span>Loot from this chamber</span></div>
-        <div><b>${s.shields}</b><span>Shields left</span></div>
+        <div class="accent"><b>${money(lootHere)}</b><span>Loot from this chamber</span></div>
+        <div><b>${s.shields}</b><span>Lives left</span></div>
         <div><b>${s.gadgets}</b><span>Gadgets left</span></div>
       </div>
       ${routeHtml(s.lastClear.ci + 1, true)}
@@ -704,19 +742,22 @@ function recordFinish() {
 function renderFinale() {
   recordFinish();
   const sum = heist.summary();
+  const t = heist.treasure();
   audio.stopMusic(0.6);
   const el = mount(`
     <div class="vault-scene">
-      <div class="treasure">${treasureRoom(sum.prize.name)}</div>
-      <div class="light-burst"></div>
+      <div class="treasure">${treasureRoom(t)}</div>
+      <div class="light-burst" style="--glow:${t.material.glow}"></div>
       <div class="door-wrap">${vaultDoor({ glow: true })}</div>
     </div>
     <div class="sparkles" aria-hidden="true"></div>
     <div class="prize-card" role="status">
-      <h1>${esc(sum.prize.name)}</h1>
-      <p>${esc(sum.prize.text)} The vault is yours.</p>
+      <div class="kicker">${esc(line(ST.won))}</div>
+      <h1>${esc(t.name)}</h1>
+      <p>${esc(t.quirks[0])} ${esc(t.quirks[1])}</p>
+      <p class="value">Worth: ${esc(t.value)}</p>
       <div class="loot-total" data-total>${money(0)}</div>
-      <div class="actions" style="justify-content:center"><button class="btn" data-act="debrief">See the debrief</button></div>
+      <div class="actions" style="justify-content:center"><button class="btn" data-act="debrief">See how you did</button></div>
     </div>`, "finale");
   audio.play("vault");
   const steps = settings.reduceMotion ? [0, 0, 0] : [300, 1000, 1500];
@@ -724,7 +765,6 @@ function renderFinale() {
   setTimeout(() => el.classList.add("unbolt"), steps[1]);
   setTimeout(() => {
     el.classList.add("open");
-    // Count the haul up.
     const total = el.querySelector("[data-total]");
     const target = sum.loot, t0 = performance.now(), dur = settings.reduceMotion ? 1 : 2400;
     setTimeout(() => {
@@ -737,12 +777,13 @@ function renderFinale() {
       step();
       if (!settings.reduceMotion) {
         const sp = el.querySelector(".sparkles");
-        for (let i = 0; i < 70; i++) {
+        const colors = [t.material.glow, t.material.hi, "#3ef2b4", "#ffffff"];
+        for (let i = 0; i < 80; i++) {
           const n = document.createElement("i");
           n.style.left = Math.random() * 100 + "%";
           n.style.animationDuration = 3 + Math.random() * 4 + "s";
           n.style.animationDelay = Math.random() * 3 + "s";
-          n.style.background = Math.random() < 0.8 ? "var(--gold)" : "#fff3d6";
+          n.style.background = colors[i % colors.length];
           sp.appendChild(n);
         }
       }
@@ -762,11 +803,12 @@ function renderCaught() {
     <div class="dialog alert" role="alertdialog" aria-labelledby="cg">
       <div class="siren"></div>
       <h2 id="cg">Caught in the ${esc(sum.chamberName.replace(/^The /, ""))}</h2>
-      <p>The last shield fell and the doors sealed. Your crew cracked ${sum.correct} of ${sum.total} locks and made it ${sum.chamberReached === 0 ? "as far as the first chamber" : `through ${sum.chamberReached} of ${DATA.chambers.length} chambers`} with ${money(sum.loot)} in loot.</p>
+      <p class="story">${esc(line(ST.caught))}</p>
+      <p>You got ${sum.correct} of ${sum.total} right and made it ${sum.chamberReached === 0 ? "into the first chamber" : `through ${sum.chamberReached} of ${DATA.chambers.length} chambers`} with ${money(sum.loot)}. So close. Try again?</p>
       <div class="actions"><button class="btn secondary" data-act="debrief">Debrief</button><button class="btn" data-act="again">Try again</button></div>
     </div>`, "caught");
   on(el, '[data-act="debrief"]', "click", () => { tap(); view = "debrief"; render(); });
-  on(el, '[data-act="again"]', "click", () => { tap(); store.del(KEY.run); view = "setup"; render(); });
+  on(el, '[data-act="again"]', "click", () => { tap(); store.del(KEY.run); newHeist(); });
 }
 
 function renderDebrief() {
@@ -775,26 +817,26 @@ function renderDebrief() {
   const el = mount(`
     <div class="panel">
       <div class="kicker">${sum.won ? "Vault cracked" : "Mission report"}</div>
-      <h1>${sum.won ? `You stole ${esc(sum.prize.name.replace(/^The /, "the "))}` : `Stopped at the ${esc(sum.chamberName.replace(/^The /, ""))}`}</h1>
+      <h1>${sum.won ? `You stole ${esc(heist.treasure().name.replace(/^The /, "the "))}!` : `Stopped at the ${esc(sum.chamberName.replace(/^The /, ""))}`}</h1>
       ${routeHtml(sum.won ? DATA.chambers.length : sum.chamberReached, true, sum.won ? DATA.chambers.length : sum.chamberReached)}
       <div class="stats">
-        <div class="gold"><b>${money(sum.loot)}</b><span>Total loot</span></div>
+        <div class="accent"><b>${money(sum.loot)}</b><span>Total loot</span></div>
         <div><b>${sum.correct} / ${sum.total}</b><span>Flags identified</span></div>
-        <div><b>${sum.bestStreak}</b><span>Best streak</span></div>
-        <div><b>${sum.gadgetsUsed}</b><span>Gadgets used</span></div>
+        <div><b>${sum.bestStreak}</b><span>Most right in a row</span></div>
+        <div><b>${sum.gadgetsUsed}</b><span>Clues used</span></div>
         <div><b>${sum.minutes} min</b><span>Time in the vault</span></div>
       </div>
       ${players.length ? `<div class="player-scores">${players.map(([n, p]) => `<div><strong>${esc(n)}</strong><br>${p.correct} of ${p.total} correct</div>`).join("")}</div>` : ""}
-      ${sum.learn.length ? `<h2>Flags to study</h2><p>The ones that got away or needed a gadget.</p>
+      ${sum.learn.length ? `<h2>Ones to practice</h2><p>The ones you missed or needed a clue for.</p>
       <div class="learn-grid">${sum.learn.map((code) => `<figure><img src="${flagSrc(code)}" alt=""><figcaption>${esc(country(code).name)}</figcaption></figure>`).join("")}</div>`
-      : `<h2>A clean job</h2><p>Every flag identified without a single gadget. Next time, try Timed mode.</p>`}
+      : `<h2>A perfect job</h2><p>Every answer right, no clues needed. Legendary.</p>`}
       <div class="actions">
         <button class="btn ghost" data-act="title">Title screen</button>
         <button class="btn" data-act="again">Plan another heist</button>
       </div>
     </div>`, "panel-screen");
   on(el, '[data-act="title"]', "click", () => { tap(); store.del(KEY.run); heist = null; view = "title"; document.body.dataset.intensity = 0; render(); });
-  on(el, '[data-act="again"]', "click", () => { tap(); store.del(KEY.run); heist = null; view = "setup"; render(); });
+  on(el, '[data-act="again"]', "click", () => { tap(); store.del(KEY.run); newHeist(); });
 }
 
 // ---------------------------------------------------------------- overlays

@@ -7,8 +7,10 @@
 
 import { buildAnswerIndex, judge } from "./answers.js";
 import { makeRng, newSeed } from "./rng.js";
+import { makeTreasure } from "./treasure.js";
 
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
+const REVEAL_TYPES = ["decrypt", "sweep"];
 
 export class Heist {
   constructor(data, state) {
@@ -18,7 +20,7 @@ export class Heist {
     this.index = buildAnswerIndex(data.countries, data.ambiguous);
   }
 
-  static create(data, { mode = "team", players = ["Crew"], timed = false, seed = newSeed() } = {}) {
+  static create(data, { mode = "team", players = ["Crew"], timed = true, seed = newSeed() } = {}) {
     const plan = buildPlan(data, makeRng(seed));
     const r = data.rules;
     const state = {
@@ -34,10 +36,11 @@ export class Heist {
 
   static restore(data, saved) {
     if (!saved || saved.v !== SAVE_VERSION) return null;
-    // Refuse saves that reference flags no longer in the data.
     const codes = new Set(data.countries.map((c) => c.code));
-    for (const ch of saved.plan.chambers) for (const q of ch.questions) if (!codes.has(q.code)) return null;
     if (saved.plan.chambers.length !== data.chambers.length) return null;
+    for (const ch of saved.plan.chambers) for (const q of ch.questions) {
+      if (!codes.has(q.code) || (q.bonus && !codes.has(q.bonus.code))) return null;
+    }
     return new Heist(data, saved);
   }
 
@@ -56,18 +59,20 @@ export class Heist {
     for (let i = 0; i < s.ci; i++) n += s.plan.chambers[i].questions.length;
     return n + s.qi + 1;
   }
+  get story() { return this.state.plan.story; }
 
-  /** The question currently on screen (bonus checkpoint or main slot). */
+  /** The question currently on screen (bonus checkpoint or main lock). */
   get active() {
     const s = this.state, q = this.slot, cur = s.cur;
     if (!q || !cur) return null;
     const bonus = cur.stage === "bonus";
+    const src = bonus ? q.bonus : q;
     return {
-      code: bonus ? q.bonusCode : q.code,
-      type: bonus ? "flag" : q.type,
-      decoys: bonus ? [] : q.decoys || [],
-      groupName: q.groupName,
-      tileOrder: q.tileOrder,
+      code: src.code,
+      type: src.type,
+      decoys: src.decoys || [],
+      groupName: src.groupName,
+      tileOrder: src.tileOrder,
       bonus,
       laser: !bonus && cur.eventId === "laserGrid",
       countdown: !bonus && cur.eventId === "countdown" ? this.data.events.find((e) => e.id === "countdown").seconds : 0,
@@ -76,6 +81,7 @@ export class Heist {
       hints: cur.hints,
       finalLock: !!this.chamber.finalLock,
       baseLoot: this.chamber.lootPerFlag * (bonus ? 0.5 : 1),
+      reveal: REVEAL_TYPES.includes(src.type),
     };
   }
 
@@ -87,7 +93,7 @@ export class Heist {
   canUseGadget(type) {
     const s = this.state, a = this.active;
     if (s.phase !== "question" || !a) return { ok: false, why: "Not now." };
-    if (a.laser) return { ok: false, why: "Gadgets are offline in the laser grid." };
+    if (a.laser) return { ok: false, why: "Gadgets are off in the laser grid." };
     if (s.gadgets <= 0) return { ok: false, why: "No gadgets left." };
     if (a.hints.includes(type)) return { ok: false, why: "Already used on this flag." };
     if (a.type === "map" && type === "locate") return { ok: false, why: "You can already see where it is." };
@@ -103,13 +109,20 @@ export class Heist {
         const pattern = c.name.split("").map((ch, i) => (i === 0 ? ch : /[A-Za-zÀ-ÿ]/.test(ch) ? "_" : ch)).join(" ");
         return { label: "Decoded", text: pattern };
       }
-      case "intel": return { label: "Intel", text: `Capital: ${c.capital}${c.status ? ` · ${c.status}` : ""}` };
+      case "intel": return { label: "Intel", text: `Capital: ${c.capital}${c.status ? `. ${c.status}` : ""}` };
     }
     return null;
   }
 
   introSeen(key) { return this.state.introsSeen.includes(key); }
   markIntro(key) { if (!this.introSeen(key)) this.state.introsSeen.push(key); }
+
+  /** The treasure behind the vault door (only meaningful once won). */
+  treasure() {
+    const s = this.state;
+    const best = s.history.filter((h) => h.correct && h.type !== "map").sort((a, b) => this.country(b.code).tier - this.country(a.code).tier)[0];
+    return makeTreasure(this.data.treasure, s.plan.treasureSeed, best ? this.country(best.code).name : "Atlantis");
+  }
 
   // ---------- actions ----------
   beginChamber() {
@@ -132,11 +145,16 @@ export class Heist {
     if (s.phase !== "event" || !ev) return null;
     s.cur.eventDone = true;
     s.cur.eventId = ev.id;
-    let effect = null;
+    const effect = {};
     if (ev.id === "supplyDrop") {
       const before = s.gadgets;
       s.gadgets = Math.min(r.maxGadgets, s.gadgets + 1);
-      effect = { gadgets: s.gadgets - before };
+      effect.gadgets = s.gadgets - before;
+    }
+    if (ev.id === "jackpot") { effect.loot = this.chamber.lootPerFlag * 2; s.loot += effect.loot; }
+    if (ev.id === "keycard") {
+      if (s.shields < r.maxShields) { s.shields++; effect.shields = 1; }
+      else { effect.loot = this.chamber.lootPerFlag; s.loot += effect.loot; }
     }
     if (ev.id === "checkpoint") s.cur.stage = "bonus";
     s.cur.keep = true;
@@ -181,15 +199,15 @@ export class Heist {
 
   #resolve(correct, info) {
     const s = this.state, a = this.active, r = this.data.rules, g = this.data.gadgets;
-    const o = { correct, code: a.code, bonus: a.bonus, gained: 0, stake: a.stake, shieldLost: false, shieldRestored: false, multipliers: [], ...info };
+    const o = { correct, code: a.code, type: a.type, bonus: a.bonus, gained: 0, stake: a.stake, shieldLost: false, shieldRestored: false, multipliers: [], ...info };
     if (correct) {
       let mult = 1;
       const hintCost = Math.min(0.9, a.hints.reduce((t, h) => t + g[h].cost, 0));
-      if (hintCost) { mult *= 1 - hintCost; o.multipliers.push(`Gadgets −${Math.round(hintCost * 100)}%`); }
-      if (a.type === "decrypt" && info.hiddenFraction > 0) {
-        const b = info.hiddenFraction * r.decryptMaxBonus;
+      if (hintCost) { mult *= 1 - hintCost; o.multipliers.push(`Clues −${Math.round(hintCost * 100)}%`); }
+      if (a.reveal && info.hiddenFraction > 0) {
+        const b = info.hiddenFraction * r.revealMaxBonus;
         mult *= 1 + b;
-        o.multipliers.push(`Early decrypt +${Math.round(b * 100)}%`);
+        o.multipliers.push(`Early answer +${Math.round(b * 100)}%`);
       }
       if (a.laser) { mult *= 2; o.multipliers.push("Laser grid ×2"); }
       if (a.countdown && info.elapsedMs <= a.countdown * 1000) { mult *= 3; o.multipliers.push("Beat the patrol ×3"); }
@@ -198,7 +216,7 @@ export class Heist {
       o.gained = Math.round((a.baseLoot * mult) / 10) * 10;
       if (a.bonus) {
         if (s.shields < r.maxShields) { s.shields++; o.shieldRestored = true; }
-        else { o.gained += a.baseLoot; o.multipliers.push("Shields full: bonus loot"); }
+        else { o.gained += a.baseLoot; o.multipliers.push("Lives full: bonus loot"); }
       }
       s.loot += o.gained + a.stake;
       s.streak++;
@@ -249,7 +267,7 @@ export class Heist {
   }
 
   summary() {
-    const s = this.state, h = s.history.filter((x) => !x.bonus || x.correct);
+    const s = this.state;
     const answered = s.history.filter((x) => !x.bonus);
     const learn = [];
     for (const x of s.history) {
@@ -276,21 +294,23 @@ export class Heist {
       bestStreak: s.bestStreak,
       learn,
       perPlayer,
-      prize: this.data.prizes[s.plan.prizeIndex],
       minutes: Math.max(1, Math.round(((s.finishedAt || Date.now()) - s.startedAt) / 60000)),
-      flagsSeen: h.length,
     };
   }
 }
 
 // ---------------------------------------------------------------------------
-// Run planning: picks every flag for the run up front, respecting tiers and
-// never repeating a flag.
+// Run planning: picks every flag, event and story line for the run up front,
+// respecting tiers and never repeating a flag.
 // ---------------------------------------------------------------------------
 export function buildPlan(data, rng) {
   const used = new Set();
   const tierOf = new Map(data.countries.map((c) => [c.code, c.tier]));
   const tiersFor = (t) => (Array.isArray(t) ? range(t[0], t[1]) : [t]);
+  const minArea = data.rules.mapMinArea ?? 250;
+  const box = data.map.boxes;
+  const bigEnough = (c) => box[c.code] && (box[c.code][2] - box[c.code][0]) * (box[c.code][3] - box[c.code][1]) >= minArea;
+
   const pick = (tiers, filter = () => true) => {
     for (let widen = 0; widen <= 5; widen++) {
       const ts = new Set(tiers.flatMap((t) => range(t - widen, t + widen)));
@@ -303,16 +323,16 @@ export function buildPlan(data, rng) {
     }
     throw new Error("Ran out of flags");
   };
-  const events = rng.shuffle(data.events);
-  let ei = 0;
-  const minArea = data.rules.mapMinArea ?? 250;
-  const chambers = data.chambers.map((ch) => ({
-    questions: ch.slots.map((slot) => {
-      const tiers = tiersFor(slot.tier);
-      const q = { type: slot.type, wager: !!slot.wager };
-      if (slot.type === "doppel") {
+
+  const makeQuestion = (type, tierSpec) => {
+    const tiers = tiersFor(tierSpec);
+    const q = { type };
+    if (type === "doppel") {
+      // Widen the tier range step by step until a lookalike group has a free flag.
+      for (let widen = 0; widen <= 3 && !q.code; widen++) {
+        const ts = range(tiers[0] - widen, tiers[tiers.length - 1] + widen);
         for (const g of rng.shuffle(data.lookalikes)) {
-          const cands = g.codes.filter((c) => !used.has(c) && tiers.includes(tierOf.get(c)));
+          const cands = g.codes.filter((c) => !used.has(c) && ts.includes(tierOf.get(c)));
           if (!cands.length) continue;
           q.code = rng.pick(cands);
           used.add(q.code);
@@ -320,23 +340,45 @@ export function buildPlan(data, rng) {
           q.groupName = g.name;
           break;
         }
-        if (!q.code) { q.type = "flag"; q.code = pick(tiers); }
-      } else if (slot.type === "map") {
-        const box = data.map.boxes;
-        q.code = pick(tiers, (c) => box[c.code] && (box[c.code][2] - box[c.code][0]) * (box[c.code][3] - box[c.code][1]) >= minArea);
-      } else {
-        q.code = pick(tiers);
       }
-      if (slot.type === "decrypt") q.tileOrder = rng.shuffle(range(0, 23));
-      if (slot.event) {
-        const ev = events[ei++ % events.length];
-        q.event = ev.id;
-        if (ev.id === "checkpoint") q.bonusCode = pick(tiers);
-      }
-      return q;
-    }),
+      if (!q.code) { q.type = "flag"; q.code = pick(tiers); }
+    } else if (type === "map") {
+      q.code = pick(tiers, bigEnough);
+    } else {
+      q.code = pick(tiers);
+    }
+    if (type === "decrypt") q.tileOrder = rng.shuffle(range(0, 23));
+    return q;
+  };
+
+  const chambers = data.chambers.map((ch) => ({
+    questions: ch.tiers.map((t, i) => ({ ...makeQuestion(ch.mechanic, t), wager: (ch.wagers || []).includes(i) })),
   }));
-  return { chambers, prizeIndex: rng.int(data.prizes.length) };
+
+  // Security events: a random few, at random locks (never the first lock of a chamber).
+  const spots = [];
+  for (const ci of data.rules.eventChambers) for (let qi = 1; qi < chambers[ci].questions.length; qi++) {
+    if (!chambers[ci].questions[qi].wager) spots.push([ci, qi]);
+  }
+  const chosenSpots = rng.shuffle(spots).slice(0, data.rules.eventsPerRun);
+  const events = rng.shuffle(data.events);
+  chosenSpots.forEach(([ci, qi], i) => {
+    const q = chambers[ci].questions[qi];
+    q.event = events[i % events.length].id;
+    if (q.event === "checkpoint") {
+      const ch = data.chambers[ci];
+      q.bonus = makeQuestion(ch.mechanic, ch.tiers[qi]);
+    }
+  });
+
+  const st = data.story;
+  const story = {
+    vault: rng.pick(st.vaults), city: rng.pick(st.cities), contact: rng.pick(st.contacts), crew: rng.pick(st.crews),
+    briefing: rng.int(st.briefing.length),
+    chamberIntro: st.chamberIntro.map((list) => rng.int(list.length)),
+    eventText: Object.fromEntries(Object.entries(st.events).map(([k, list]) => [k, rng.int(list.length)])),
+  };
+  return { chambers, story, treasureSeed: rng.int(2 ** 31) };
 }
 
 function range(a, b) {
